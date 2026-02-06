@@ -1,0 +1,13 @@
+{
+  "name": "ma1-turnbased-blokus",
+  "version-string": "0.0.1",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "features": [
+        "sdl3-binding",
+        "sdl3-renderer-binding"
+      ]
+    }
+  ]
+}
