@@ -1,18 +1,43 @@
+#include "Game.h"
+
+#define SDL_MAIN_USE_CALLBACKS
+#include <SDL3/SDL_main.h>
+
+// SDL3 main callbacks entry point
+SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
+    return Game::AppInit(appstate, argc, argv);
+}
+
+SDL_AppResult SDL_AppIterate(void* appstate) {
+    return Game::AppIterate(appstate);
+}
+
+SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
+    return Game::AppEvent(appstate, event);
+}
+
+void SDL_AppQuit(void* appstate, SDL_AppResult result) {
+    Game::AppQuit(appstate, result);
+}
+
+/*
+ *
+ *
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <cstdio>
 #include <SDL3/SDL.h>
 #include <memory>
-
-#define SDL_MAIN_USE_CALLBACKS
-#include <SDL3/SDL_main.h>
-
 struct App {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
-    bool show_demo_window = true;
+    bool show_demo_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+    const Uint64 FPS = 60;
+    const Uint64 FRAME_DELAY = 1000 / FPS;
+    const int MOVE_VEL = 20;
 };
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -113,3 +138,4 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result) {
     SDL_DestroyWindow(app->window);
     SDL_Quit();
 }
+*/
