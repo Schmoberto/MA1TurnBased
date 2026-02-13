@@ -15,9 +15,17 @@ set(SOURCES
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(GameNetworkingSockets CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(concurrentqueue CONFIG REQUIRED)
 
 add_executable(MA1TurnBased)
 
 target_sources(MA1TurnBased PRIVATE ${SOURCES})
 
-target_link_libraries(MA1TurnBased PRIVATE SDL3::SDL3 imgui::imgui)
+target_link_libraries(MA1TurnBased PRIVATE
+        SDL3::SDL3
+        imgui::imgui
+        GameNetworkingSockets::shared
+        concurrentqueue::concurrentqueue
+        nlohmann_json::nlohmann_json)

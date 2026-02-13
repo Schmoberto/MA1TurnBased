@@ -2,9 +2,9 @@
 
 #include "Board.h"
 #include <SDL3/SDL.h>
-//#include <SDL3/SDL_main.h>
 #include <imgui.h>
 #include <memory>
+#include <concurrentqueue/>
 
 class Game {
 public:
@@ -21,8 +21,8 @@ private:
 
     static const int WINDOW_WIDTH = 800;
     static const int WINDOW_HEIGHT = 800;
-    static const int GRID_SIZE = 20;
-    static const int CELL_SIZE = 45;
+    static const int GRID_SIZE = 3;
+    static const int CELL_SIZE = 200;
     static const int GRID_OFFSET_X = 5;
     static const int GRID_OFFSET_Y = 5;
 
