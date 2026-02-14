@@ -13,13 +13,15 @@
 enum class CommandType {
     PLACE_MARK,
     RESET_GAME,
-    NETWORK_MOVE
+    NETWORK_MOVE,
+    NETWORK_RESET
 };
 
 struct Command {
     CommandType type;
     int x, y;
     TileState mark;
+    bool fromNetwork = false;
 };
 
 struct GameStateSnapshot {
@@ -51,9 +53,12 @@ private:
     // SDL
     SDL_Window* window;
     SDL_Renderer* renderer;
-    bool show_demo_window = false;
+    bool show_demo_window = true;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
     std::unique_ptr<Board> board;
+
+    // ImGui (persistent)
+    ImGuiContext* imguiContext;
 
     // Networking
     bool isServer;
@@ -90,6 +95,7 @@ private:
     void handleEvent(SDL_Event* event);
     void update();
     void render();
+    void renderImGui();
     void cleanup();
 
     void handleKeyPress(SDL_Keycode key);
