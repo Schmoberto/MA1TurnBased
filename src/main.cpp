@@ -5,6 +5,12 @@
 
 // SDL3 main callbacks entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
+    printf("\n[MAIN] Starting Multithreaded Networked TicTacToe...\n");
+
+    if (argc < 2) {
+        printf("Usage: %s [server|client] [server_address] [port]\n", argv[0]);
+    }
+
     return Game::AppInit(appstate, argc, argv);
 }
 

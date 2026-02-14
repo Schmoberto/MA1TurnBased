@@ -1,13 +1,37 @@
 #pragma once
 
 #include "Board.h"
+#include "NetworkManager.h"
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <memory>
+#include <thread>
+#include <atomic>
+#include <moodycamel/concurrentqueue.h>
+
+// Commands for inter-thread communication
+enum class CommandType {
+    PLACE_MARK,
+    RESET_GAME,
+    NETWORK_MOVE
+};
+
+struct Command {
+    CommandType type;
+    int x, y;
+    TileState mark;
+};
+
+struct GameStateSnapshot {
+    std::array<std::array<TileState, 3>, 3> boardState;
+    TileState currentPlayer;
+    GameResult result;
+    bool isMyTurn;
+};
 
 class Game {
 public:
-    Game();
+    Game(bool isServer, const std::string& serverAddr = "127.0.0.1", uint16_t port = 27015);
     ~Game();
 
     static SDL_AppResult AppInit(void** appstate, int argc, char** argv);
@@ -16,20 +40,52 @@ public:
     static void AppQuit(void* appstate, SDL_AppResult result);
 
 private:
-    std::unique_ptr<Board> board;
-
+    // Constants
     static const int WINDOW_WIDTH = 800;
     static const int WINDOW_HEIGHT = 800;
-    static const int GRID_SIZE = 3;
+    static const int GRID_SIZE = 30;
     static const int CELL_SIZE = 200;
-    static const int GRID_OFFSET_X = 5;
-    static const int GRID_OFFSET_Y = 5;
+    static const int GRID_OFFSET_X = 15;
+    static const int GRID_OFFSET_Y = 15;
 
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
+    // SDL
+    SDL_Window* window;
+    SDL_Renderer* renderer;
     bool show_demo_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    std::unique_ptr<Board> board;
 
+    // Networking
+    bool isServer;
+    std::unique_ptr<GameServer> gameServer;
+    std::unique_ptr<GameClient> gameClient;
+    uint16_t port;
+    std::string serverAddress;
+
+    // Threading
+    std::thread logicThread;
+    std::thread networkThread;
+    std::atomic<bool> running;
+
+    // Inter-thread queues
+    moodycamel::ConcurrentQueue<Command> commandInputQueue;
+    moodycamel::ConcurrentQueue<GameStateSnapshot> gameStateQueue;
+
+    // Render state
+    GameStateSnapshot currentRenderState;
+
+    // Game state
+    TileState myMark; // X or O
+    TileState currentTurn;
+
+    // Thread functions
+    void logicThreadFunc();
+    void networkThreadFunc();
+
+    // Network helper
+    NetworkPacket processPacket(NetworkPacket& packet, bool fromServer);
+
+    // Methods
     bool initialize();
     void handleEvent(SDL_Event* event);
     void update();
@@ -39,5 +95,6 @@ private:
     void handleKeyPress(SDL_Keycode key);
     void handleMouseClick(int mouseX, int mouseY);
 
+    void drawText(const std::string& text, int x, int y, SDL_Color color);
 };
 

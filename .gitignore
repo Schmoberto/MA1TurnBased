@@ -52,3 +52,11 @@ CMakeUserPresets.json
 
 # External projects
 *-prefix/
+
+/[Bb]uild
+/vcpkg_installed
+/.cmake/
+
+*.log
+*.vcxproj
+*.vcxproj.filters
