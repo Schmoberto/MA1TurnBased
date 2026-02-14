@@ -77,7 +77,7 @@ bool Game::initialize() {
     // Create window with SDL_Renderer graphics context
     Uint32 window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
     window = SDL_CreateWindow(
-        isServer ? "Tic-Tac-Toe Server (X)" : "Tic-Tac-Toe Client, (O)",
+        "MA1 - TicTacToe - Multithreaded Networked Game",
         WINDOW_WIDTH, WINDOW_HEIGHT,
         window_flags);
 
@@ -148,10 +148,17 @@ bool Game::initialize() {
 bool Game::startGame(bool asServer, const std::string &serverAddr, uint16_t port) {
     std::cout << "[GAME] Starting game as " << (asServer ? "SERVER" : "CLIENT") << std::endl;
 
+    // Set game mode and network parameters
     isServer = asServer;
     serverAddress = serverAddr;
     this->port = port;
     myMark = isServer ? TileState::X : TileState::O;
+
+    // Reset connection state
+    connectionState.isConnected = false;
+    connectionState.isReconnecting = false;
+    connectionState.reconnectAttempts = 0;
+    clientDisconnected = false;
 
     // Create board
     board = std::make_unique<Board>();
@@ -170,14 +177,20 @@ bool Game::startGame(bool asServer, const std::string &serverAddr, uint16_t port
         gameServer = std::make_unique<GameServer>(port);
         if (!gameServer->startServer(port)) {
             std::cerr << "[GAME] Failed to start server!" << std::endl;
+            addMessage("Failed to start server!", MessageType::ERROR);
             return false;
         }
+        connectionState.isConnected = true;
+        addMessage("Server started successfully!", MessageType::SUCCESS);
     } else {
         gameClient = std::make_unique<GameClient>();
         if (!gameClient->connectToServer(serverAddress, port)) {
             std::cerr << "[GAME] Failed to connect to server!" << std::endl;
+            addMessage("Failed to connect to server!", MessageType::ERROR);
             return false;
         }
+
+        addMessage("Connecting to server...", MessageType::INFO);
     }
 
     // Start threads
@@ -215,8 +228,150 @@ void Game::stopGame() {
         board.reset();
     }
 
+    // Clear messages
+    activeMessages.clear();
+    UIMessage msg;
+    while (messageQueue.try_dequeue(msg)) {} // Clear queue
+
     gameState = GameState::MAIN_MENU;
     printf("[GAME] Game stopped. Retuning to menu.\n");
+}
+
+// ============================================================================
+// MESSAGE SYSTEM
+// ============================================================================
+
+void Game::addMessage(const std::string& text, MessageType type) {
+    UIMessage msg;
+    msg.text = text;
+    msg.type = type;
+    msg.timestamp = std::chrono::steady_clock::now();
+
+    messageQueue.enqueue(msg);
+    std::cout << "[MESSAGE] " << text << std::endl;
+}
+
+void Game::updateMessages() {
+    // Add new messages from queue
+    UIMessage msg;
+    while (messageQueue.try_dequeue(msg)) {
+        activeMessages.push_back(msg);
+
+        // Keep only last MAX_MESSAGES
+        if (activeMessages.size() > MAX_MESSAGES) {
+            activeMessages.erase(activeMessages.begin());
+        }
+    }
+
+    // Remove old messages
+    auto now = std::chrono::steady_clock::now();
+    activeMessages.erase(
+        std::remove_if(activeMessages.begin(), activeMessages.end(),
+            [now, this](const UIMessage& m) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m.timestamp);
+                return elapsed.count() > MESSAGE_DURATION_MS;
+            }),
+        activeMessages.end()
+    );
+}
+
+void Game::renderMessages() {
+    if (activeMessages.empty()) return;
+
+    // Render messages at bottom of game status window
+    ImGui::Separator();
+    ImGui::Text("Messages:");
+
+    for (const auto& msg : activeMessages) {
+        ImVec4 color;
+        const char* prefix = "";
+
+        switch (msg.type) {
+            case MessageType::INFO:
+                color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                prefix = "[INFO] ";
+                break;
+            case MessageType::SUCCESS:
+                color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                prefix = "[✓] ";
+                break;
+            case MessageType::WARNING:
+                color = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
+                prefix = "[!] ";
+                break;
+            case MessageType::ERROR:
+                color = ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
+                prefix = "[✗] ";
+                break;
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::TextWrapped("%s%s", prefix, msg.text.c_str());
+        ImGui::PopStyleColor();
+    }
+}
+
+// ============================================================================
+// RECONNECTION LOGIC
+// ============================================================================
+
+void Game::attemptReconnect() {
+    if (isServer || connectionState.reconnectAttempts >= connectionState.maxReconnectAttempts) {
+        return;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - connectionState.lastReconnectAttempt);
+
+    if (elapsed < connectionState.reconnectDelay) {
+        return; // Wait before next attempt
+    }
+
+    connectionState.reconnectAttempts++;
+    connectionState.lastReconnectAttempt = now;
+    connectionState.isReconnecting = true;
+
+    std::cout << "[RECONNECT] Attempt " << connectionState.reconnectAttempts
+              << "/" << connectionState.maxReconnectAttempts << std::endl;
+
+    addMessage("Reconnecting... (attempt " +
+               std::to_string(connectionState.reconnectAttempts) + "/3)",
+               MessageType::WARNING);
+
+    // Try to reconnect
+    gameClient = std::make_unique<GameClient>();
+    if (gameClient->connectToServer(serverAddress, port)) {
+        std::cout << "[RECONNECT] Reconnection initiated" << std::endl;
+    } else {
+        std::cout << "[RECONNECT] Reconnection failed" << std::endl;
+
+        if (connectionState.reconnectAttempts >= connectionState.maxReconnectAttempts) {
+            addMessage("Failed to reconnect. Returning to menu...", MessageType::ERROR);
+
+            // Schedule return to menu
+            std::thread([this]() {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                stopGame();
+            }).detach();
+        }
+    }
+}
+
+void Game::handleDisconnection() {
+    if (isServer) {
+        // Server detected client disconnect
+        clientDisconnected = true;
+        addMessage("Client disconnected. Waiting for reconnection...", MessageType::WARNING);
+    } else {
+        // Client detected server disconnect
+        if (!connectionState.isReconnecting) {
+            connectionState.isConnected = false;
+            connectionState.isReconnecting = true;
+            connectionState.lastReconnectAttempt = std::chrono::steady_clock::now();
+            addMessage("Disconnected from server!", MessageType::ERROR);
+        }
+    }
 }
 
 // ============================================================================
@@ -239,6 +394,7 @@ SDL_AppResult Game::AppIterate(void* appstate) {
         return SDL_APP_CONTINUE;
     }
 
+    // Check menu choices if we're in the menu
     if (game->gameState == GameState::MAIN_MENU && game->mainMenu) {
         MenuChoice choice = game->mainMenu->getChoice();
 
@@ -264,6 +420,16 @@ SDL_AppResult Game::AppIterate(void* appstate) {
         GameStateSnapshot newState{};
         if (game->gameStateQueue.try_dequeue(newState)) {
             game->currentRenderState = newState;
+        }
+    }
+
+    // Update messages
+    game->updateMessages();
+
+    // Handle reconnction
+    if (game->gameState == GameState::IN_GAME) {
+        if (!game->isServer && !game->connectionState.isReconnecting) {
+            game->attemptReconnect();
         }
     }
 
@@ -346,16 +512,25 @@ void Game::handleMouseClick(int mouseX, int mouseY) {
 
     auto pos = board->screenToGrid(mouseX, mouseY, CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y);
 
-    if (pos.valid) {
-        Command cmd{};
-        cmd.type = CommandType::PLACE_MARK;
-        cmd.x = pos.x;
-        cmd.y = pos.y;
-        cmd.mark = myMark;
-
-        commandInputQueue.enqueue(cmd);
-        printf("[RENDER] Enqueued command: Place %c at (%d, %d)\n", myMark == TileState::X ? 'X' : 'O', cmd.x, cmd.y);
+    if (!pos.valid) {
+        addMessage("Click inside the grid!", MessageType::WARNING);
+        return;
     }
+
+    // Check if tile is already occupied
+    if (board->getTile(pos.x, pos.y) != TileState::EMPTY) {
+        addMessage("Cell already occupied!", MessageType::WARNING);
+        return;
+    }
+
+    Command cmd{};
+    cmd.type = CommandType::PLACE_MARK;
+    cmd.x = pos.x;
+    cmd.y = pos.y;
+    cmd.mark = myMark;
+
+    commandInputQueue.enqueue(cmd);
+    printf("[RENDER] Enqueued command: Place %c at (%d, %d)\n", myMark == TileState::X ? 'X' : 'O', cmd.x, cmd.y);
 }
 
 void Game::render() {
@@ -423,8 +598,8 @@ void Game::renderGame() {
 void Game::renderImGui() {
 
     // Game Status Window
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(580, 100), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(500, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(50, 100), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Game Status", nullptr, ImGuiWindowFlags_NoCollapse);
 
@@ -456,15 +631,49 @@ void Game::renderImGui() {
 
     ImGui::Separator();
 
-    // Network status
+    // Connection status
+    ImGui::Text("Connection:");
+    ImGui::SameLine();
+
     std::string netStatus;
     if (isServer) {
         int clientCount = gameServer ? gameServer->getClientCount() : 0;
         netStatus = "Server | Players: " + std::to_string(clientCount + 1) + "/2";
+
+        if (clientDisconnected) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.2f, 1.0f));
+            ImGui::Text("Client disconnected - Waiting...");
+            ImGui::PopStyleColor();
+        } else if (clientCount == 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::Text("Waiting for player... (0/2)");
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+            ImGui::Text("Connected (%d/2)", clientCount + 1);
+            ImGui::PopStyleColor();
+        }
     } else {
         netStatus = gameClient && gameClient->isConnected() ? "Connected to server" : "Connecting...";
+        if (connectionState.isReconnecting) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.2f, 1.0f));
+            ImGui::Text("Reconnecting... (%d/3)", connectionState.reconnectAttempts);
+            ImGui::PopStyleColor();
+        } else if (gameClient && gameClient->isConnected()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+            ImGui::Text("Connected");
+            ImGui::PopStyleColor();
+            connectionState.isConnected = true;
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::Text("Connecting...");
+            ImGui::PopStyleColor();
+        }
     }
     ImGui::Text("%s", netStatus.c_str());
+
+    // Buttons
+    ImGui::Separator();
 
     // Reset button
     if (ImGui::Button("Reset Game (R)")) {
@@ -480,11 +689,10 @@ void Game::renderImGui() {
         stopGame();
     }
 
-    ImGui::End();
-}
+    // Render messages at the bottom of the status window
+    renderMessages();
 
-void Game::drawText(const std::string &text, int x, int y, SDL_Color color) {
-    // change to im gui
+    ImGui::End();
 }
 
 // ============================================================================
@@ -513,6 +721,7 @@ void Game::logicThreadFunc() {
                         cmd.mark == localCurrentPlayer &&
                         board->setTile(cmd.x, cmd.y, cmd.mark)) {
                     printf("[LOGIC] Placed %c at (%d, %d)\n", cmd.mark == TileState::X ? 'X' : 'O', cmd.x, cmd.y);
+                    addMessage("Move placed!", MessageType::SUCCESS);
 
                     // Send to network
                     NetworkPacket packet;
@@ -532,6 +741,14 @@ void Game::logicThreadFunc() {
                     // Check winner
                     localResult = board->checkWinner();
 
+                    if (localResult == GameResult::X_WINS) {
+                        addMessage("X wins the game!", MessageType::SUCCESS);
+                    } else if (localResult == GameResult::O_WINS) {
+                        addMessage("O wins the game!", MessageType::SUCCESS);
+                    } else if (localResult == GameResult::DRAW) {
+                        addMessage("It's a draw!", MessageType::INFO);
+                    }
+
                     // Switch turn
                     if (localResult == GameResult::IN_PROGRESS) {
                         localCurrentPlayer = (localCurrentPlayer == TileState::X) ? TileState::O : TileState::X;
@@ -548,8 +765,9 @@ void Game::logicThreadFunc() {
                               << (cmd.mark == TileState::X ? "X" : "O")
                               << " at (" << cmd.x << ", " << cmd.y << ")" << std::endl;
 
-                    localResult = board->checkWinner();
+                    addMessage("Opponent moved!", MessageType::INFO);
 
+                    localResult = board->checkWinner();
                     if (localResult == GameResult::IN_PROGRESS) {
                         localCurrentPlayer = (localCurrentPlayer == TileState::X) ? TileState::O : TileState::X;
                         printf("[LOGIC] Turn switched to %c\n", localCurrentPlayer == TileState::X ? 'X' : 'O');
@@ -564,6 +782,8 @@ void Game::logicThreadFunc() {
                 board->resetBoard();
                 localCurrentPlayer = TileState::X;
                 localResult = GameResult::IN_PROGRESS;
+
+                addMessage("Game reset!", MessageType::INFO);
 
                 if (!cmd.fromNetwork) {
                     NetworkPacket packet;
@@ -580,6 +800,8 @@ void Game::logicThreadFunc() {
                 board->resetBoard();
                 localCurrentPlayer = TileState::X;
                 localResult = GameResult::IN_PROGRESS;
+
+                addMessage("Game reset by opponent!", MessageType::INFO);
             }
         }
 
@@ -611,10 +833,27 @@ void Game::networkThreadFunc() {
     std::cout << "[NETWORK] Thread started (ID: " << std::this_thread::get_id() << ")" << std::endl;
     std::cout << "[NETWORK] Mode: " << (isServer ? "SERVER" : "CLIENT") << std::endl;
 
+    int previousClientCount = 0;
+
     while (running) {
         // Update network
         if (isServer && gameServer) {
             gameServer->updateServer();
+
+            // Track client connections
+            int currentClientCount = gameServer->getClientCount();
+            if (currentClientCount != previousClientCount) {
+                if (currentClientCount > previousClientCount) {
+                    addMessage("Player connected!", MessageType::SUCCESS);
+                    clientDisconnected = false;
+                }
+                else {
+                    addMessage("Player disconnected!", MessageType::WARNING);
+                    handleDisconnection();
+                }
+                printf("[NETWORK] Client count changed: %d -> %d\n", previousClientCount, currentClientCount);
+            }
+            previousClientCount = currentClientCount;
 
             NetworkPacket packet;
             while (gameServer->incomingPackets.try_dequeue(packet)) {
@@ -625,8 +864,6 @@ void Game::networkThreadFunc() {
                     int y = static_cast<int>(packet.data["y"]);
                     auto mark = static_cast<TileState>(packet.data["mark"].get<int>());
 
-                    //board->setTile(x, y, mark);
-
                     Command cmd{};
                     cmd.type = CommandType::NETWORK_MOVE;
                     cmd.x = x;
@@ -634,17 +871,28 @@ void Game::networkThreadFunc() {
                     cmd.mark = mark;
                     commandInputQueue.enqueue(cmd);
 
-                   //gameServer->broadcastPacket(packet);
                 } else if (packet.type == PacketType::GAME_RESET) {
                     Command cmd;
                     cmd.type = CommandType::RESET_GAME;
                     cmd.fromNetwork = true;
                     commandInputQueue.enqueue(cmd);
                 }
-                //processPacket(packet, true);
             }
         } else if (!isServer && gameClient) {
             gameClient->updateClient();
+
+            // Track connection state
+            bool currentlyConnected = gameClient->isConnected();
+            if (!currentlyConnected && connectionState.isConnected) {
+                // Just disconnected
+                handleDisconnection();
+            } else if (currentlyConnected && connectionState.isReconnecting) {
+                // Reconnected!
+                connectionState.isConnected = true;
+                connectionState.isReconnecting = false;
+                connectionState.reconnectAttempts = 0;
+                addMessage("Reconnected successfully!", MessageType::SUCCESS);
+            }
 
             NetworkPacket packet;
             while (gameClient->incomingPackets.try_dequeue(packet)) {
@@ -655,7 +903,6 @@ void Game::networkThreadFunc() {
                     int y = static_cast<int>(packet.data["y"]);
                     auto mark = static_cast<TileState>(packet.data["mark"].get<int>());
 
-                    //board->setTile(x, y, mark);
                     printf("[NETWORK] Client processing server move: %c at (%d, %d)\n", mark == TileState::X ? 'X' : 'O', x, y);
 
                     Command cmd{};
@@ -671,8 +918,6 @@ void Game::networkThreadFunc() {
                     cmd.fromNetwork = true;
                     commandInputQueue.enqueue(cmd);
                 }
-
-                //processPacket(packet, false);
             }
         }
 

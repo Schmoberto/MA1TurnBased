@@ -54,7 +54,8 @@ bool GameServer::startServer(uint16_t port) {
 }
 
 void GameServer::stopServer() {
-    assert(running);
+    if (!running) return;
+
     running = false;
 
     for (auto connection : clients) {
@@ -84,6 +85,8 @@ void GameServer::updateServer() {
 }
 
 void GameServer::receiveMessages() {
+
+
     ISteamNetworkingMessage* incomingMessage = nullptr;
 
     int numberOfMessagesReceived = interface->ReceiveMessagesOnPollGroup(pollGroup, &incomingMessage, 1);

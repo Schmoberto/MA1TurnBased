@@ -13,8 +13,8 @@ MainMenu::MainMenu()
 void MainMenu::render() {
     // Center the menu window
     ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2 - 150, io.DisplaySize.y / 2 - 100), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_Always);
 
     ImGui::Begin("Tic Tac Toe Main Menu", nullptr,
         ImGuiWindowFlags_NoResize |

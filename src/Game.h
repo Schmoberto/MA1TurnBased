@@ -24,6 +24,28 @@ enum class GameState {
     DISCONNECTED
 };
 
+enum class MessageType {
+    INFO,
+    SUCCESS,
+    WARNING,
+    ERROR
+};
+
+struct UIMessage {
+    std::string text;
+    MessageType type;
+    std::chrono::steady_clock::time_point timestamp;
+};
+
+struct ConnectionState {
+    bool isConnected;
+    bool isReconnecting = false;
+    int reconnectAttempts = 0;
+    int maxReconnectAttempts = 3;
+    std::chrono::steady_clock::time_point lastReconnectAttempt;
+    std::chrono::milliseconds reconnectDelay{3000}; // 3 seconds
+};
+
 struct Command {
     CommandType type;
     int x, y;
@@ -50,8 +72,8 @@ public:
 
 private:
     // Constants
-    static const int WINDOW_WIDTH = 800;
-    static const int WINDOW_HEIGHT = 800;
+    static const int WINDOW_WIDTH = 1200;
+    static const int WINDOW_HEIGHT = 900;
     static const int GRID_SIZE = 30;
     static const int CELL_SIZE = 200;
     static const int GRID_OFFSET_X = 15;
@@ -78,6 +100,10 @@ private:
     uint16_t port;
     std::string serverAddress;
 
+    // Connection tracking
+    ConnectionState connectionState;
+    std::atomic<bool> clientDisconnected{false};
+
     // Threading
     std::thread logicThread;
     std::thread networkThread;
@@ -86,9 +112,15 @@ private:
     // Inter-thread queues
     moodycamel::ConcurrentQueue<Command> commandInputQueue;
     moodycamel::ConcurrentQueue<GameStateSnapshot> gameStateQueue;
+    moodycamel::ConcurrentQueue<UIMessage> messageQueue;
 
     // Render state
     GameStateSnapshot currentRenderState;
+
+    // UI messages
+    std::vector<UIMessage> activeMessages;
+    static const int MAX_MESSAGES = 3;
+    static const int MESSAGE_DURATION_MS = 5000; // 5 seconds
 
     // Game state
     TileState myMark; // X or O
@@ -112,11 +144,18 @@ private:
     void renderMenu();
     void renderGame();
     void renderImGui();
+    void renderMessages();
     void cleanup();
 
     void handleKeyPress(SDL_Keycode key);
     void handleMouseClick(int mouseX, int mouseY);
 
-    void drawText(const std::string& text, int x, int y, SDL_Color color);
+    // Message helpers
+    void addMessage(const std::string& text, MessageType type = MessageType::INFO);
+    void updateMessages();
+
+    // Reconnection
+    void attemptReconnect();
+    void handleDisconnection();
 };
 

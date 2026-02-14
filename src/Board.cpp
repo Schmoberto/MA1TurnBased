@@ -13,17 +13,16 @@ Board::~Board() = default;
 
 
 bool Board::setTile(int x, int y, TileState mark) {
-    printf("a1");
     if (!isValidPosition(x, y)) {
+        printf("[BOARD] Invalid position (%d, %d)\n", x, y);
         return false;
     }
 
-    printf("a2");
     if (tiles[y][x] != TileState::EMPTY) {
+        printf("[BOARD] Tile at (%d, %d) is already occupied by %c\n", x, y, tiles[y][x] == TileState::X ? 'X' : 'O');
         return false; // Tile already occupied
     }
 
-    printf("a3");
     tiles[y][x] = mark;
     return true;
 }
