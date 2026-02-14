@@ -48,6 +48,12 @@ public:
 
     int getSize() const { return SIZE; }
 
+    // Setters
+    void setGridColor(SDL_Color color) { gridColor = color; }
+    void setBackgroundColor(SDL_Color color) { backgroundColor = color; }
+    void setGridThickness(int thickness) { gridThickness = thickness; }
+    void setBackgroundPadding(int padding) { backgroundPadding = padding; }
+
 private:
     static const int SIZE = 3;
     std::array<std::array<TileState, 3>, 3> tiles;

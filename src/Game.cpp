@@ -4,9 +4,10 @@
 #include <imgui_impl_sdlrenderer3.h>
 #include <iostream>
 
-Game::Game(bool isServer, const std::string& serverAddr, uint16_t port)
+Game::Game()
     : window(nullptr), renderer(nullptr), board(nullptr)
-      , isServer(isServer), port(port), serverAddress(serverAddr)
+      , gameState(GameState::MAIN_MENU)
+      , isServer(isServer), port(port), serverAddress("127.0.0.1")
       , running(false)
       , currentRenderState(), myMark(isServer ? TileState::X : TileState::O)
       , currentTurn(TileState::X) {
@@ -56,7 +57,7 @@ SDL_AppResult Game::AppInit(void** appstate, int argc, char* argv[]) {
 
     printf("[AppInit] Initializing game...\n");
     // Create game instance
-    Game* game = new Game(isServer, serverAddr, port);
+    Game* game = new Game();
 
     if (!game->initialize()) {
         delete game;
@@ -133,51 +134,89 @@ bool Game::initialize() {
             return false;
         }
 
+        mainMenu = std::make_unique<MainMenu>();
+
         printf("[AppInit:ImGui] ImGui initialized.\n");
     } catch (const std::exception& e) {
         std::cerr << "[AppInit:ImGui] Exception during ImGui initialization: " << e.what() << std::endl;
     }
 
+    printf("Game initialized.\n");
+    return true;
+}
 
-    printf("[AppInit] Initializing board...\n");
-    // Initialize board
+bool Game::startGame(bool asServer, const std::string &serverAddr, uint16_t port) {
+    std::cout << "[GAME] Starting game as " << (asServer ? "SERVER" : "CLIENT") << std::endl;
+
+    isServer = asServer;
+    serverAddress = serverAddr;
+    this->port = port;
+    myMark = isServer ? TileState::X : TileState::O;
+
+    // Create board
     board = std::make_unique<Board>();
-    board->resetBoard();
+    board->setGridThickness(6);
+    board->setGridColor({30, 30, 30, 255});
+    board->setBackgroundColor({245, 245, 220, 255});
+    board->setBackgroundPadding(15);
 
     // Initialize render state
     currentRenderState.currentPlayer = TileState::X;
     currentRenderState.result = GameResult::IN_PROGRESS;
     currentRenderState.isMyTurn = isServer;
 
-    printf("[AppInit] Starting network...\n");
     // Start network
     if (isServer) {
         gameServer = std::make_unique<GameServer>(port);
         if (!gameServer->startServer(port)) {
-            std::cerr << "[AppInit:GameServer] Failed to start server." << std::endl;
+            std::cerr << "[GAME] Failed to start server!" << std::endl;
             return false;
         }
     } else {
         gameClient = std::make_unique<GameClient>();
         if (!gameClient->connectToServer(serverAddress, port)) {
-            std::cerr << "[AppInit:GameClient] Failed to connect to server." << std::endl;
+            std::cerr << "[GAME] Failed to connect to server!" << std::endl;
             return false;
         }
     }
-    printf("[AppInit] Network started successfully.\n");
 
-    printf("[AppInit] Starting threads...\n");
     // Start threads
+    printf("[AppInit] Starting threads...\n");
     running = true;
-
     printf("===MULTITHREADING===\n");
     std::cout << "Main thread ID: " << std::this_thread::get_id() << std::endl;
 
     logicThread = std::thread(&Game::logicThreadFunc, this);
     networkThread = std::thread(&Game::networkThreadFunc, this);
 
-    printf("[AppInit] All threads started successfully. Game initialized.\n");
+    gameState = GameState::IN_GAME;
+    std::cout << "[GAME] Game started successfully!" << std::endl;
     return true;
+}
+
+void Game::stopGame() {
+    printf("[GAME] Stopping game...\n");
+    running = false;
+
+    if (logicThread.joinable()) {
+        logicThread.join();
+    }
+    if (networkThread.joinable()) {
+        networkThread.join();
+    }
+
+    if (gameServer) {
+        gameServer.reset();
+    }
+    if (gameClient) {
+        gameClient.reset();
+    }
+    if (board) {
+        board.reset();
+    }
+
+    gameState = GameState::MAIN_MENU;
+    printf("[GAME] Game stopped. Retuning to menu.\n");
 }
 
 // ============================================================================
@@ -188,17 +227,44 @@ bool Game::initialize() {
 SDL_AppResult Game::AppIterate(void* appstate) {
     Game* game = static_cast<Game*>(appstate);
 
+    if (!game) {
+        std::cerr << "[AppIterate] Game pointer is null!" << std::endl;
+        return SDL_APP_FAILURE;
+    }
+
+    // If window is minimized, pause rendering to save resources
     if (SDL_GetWindowFlags(game->window) & SDL_WINDOW_MINIMIZED)
     {
-        std::cerr << "[AppIterate] Game pointer is null!" << std::endl;
         SDL_WaitEvent(nullptr);
         return SDL_APP_CONTINUE;
     }
 
+    if (game->gameState == GameState::MAIN_MENU && game->mainMenu) {
+        MenuChoice choice = game->mainMenu->getChoice();
+
+        if (choice == MenuChoice::HOST_SERVER) {
+            game->mainMenu->resetChoice();
+            if (!game->startGame(true, "", game->mainMenu->getServerPort())) {
+                std::cerr << "[MAIN MENU] Failed to start server game." << std::endl;
+                // Stay in menu
+            }
+        } else if (choice == MenuChoice::JOIN_SERVER) {
+            game->mainMenu->resetChoice();
+            if (!game->startGame(false, game->mainMenu->getServerIP(), game->mainMenu->getServerPort())) {
+                std::cerr << "[MAIN MENU] Failed to join server." << std::endl;
+                // Stay in menu
+            }
+        } else if (choice == MenuChoice::QUIT) {
+            return SDL_APP_SUCCESS; // Exit app
+        }
+    }
+
     // Get latest state from logic thread
-    GameStateSnapshot newState{};
-    if (game->gameStateQueue.try_dequeue(newState)) {
-        game->currentRenderState = newState;
+    if (game->gameState == GameState::IN_GAME) {
+        GameStateSnapshot newState{};
+        if (game->gameStateQueue.try_dequeue(newState)) {
+            game->currentRenderState = newState;
+        }
     }
 
     game->render();
@@ -233,7 +299,11 @@ SDL_AppResult Game::AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
     }
-    game->handleEvent(event);
+
+    // Only handle events if we're in the game
+    if (game->gameState == GameState::IN_GAME) {
+        game->handleEvent(event);
+    }
 
     return SDL_APP_CONTINUE;
 }
@@ -316,13 +386,11 @@ void Game::render() {
     SDL_SetRenderDrawColor(renderer, 50, 50, 60, 255);
     SDL_RenderClear(renderer);
 
-    // Draw board
-    if (board) {
-        board->render(renderer, CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y);
+    if (gameState == GameState::MAIN_MENU) {
+        renderMenu();
+    } else if (gameState == GameState::IN_GAME) {
+        renderGame();
     }
-
-    // Render ImGui windows
-    renderImGui();
 
     // Render ImGui
     try {
@@ -334,6 +402,22 @@ void Game::render() {
     }
 
     SDL_RenderPresent(renderer);
+}
+
+void Game::renderMenu() {
+    if (mainMenu) {
+        mainMenu->render();
+    }
+}
+
+void Game::renderGame() {
+    // Draw board
+    if (board) {
+        board->render(renderer, CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y);
+    }
+
+    // Draw game UI
+    renderImGui();
 }
 
 void Game::renderImGui() {
@@ -387,6 +471,13 @@ void Game::renderImGui() {
         Command cmd{};
         cmd.type = CommandType::RESET_GAME;
         commandInputQueue.enqueue(cmd);
+    }
+
+    ImGui::SameLine();
+
+    // Disconnect button
+    if (ImGui::Button("Disconnect")) {
+        stopGame();
     }
 
     ImGui::End();
@@ -670,30 +761,21 @@ void Game::cleanup() {
 
     // Cleanup ImGui
     if (imguiContext) {
-        std::cout << "a0" << std::endl;
         ImGui::SetCurrentContext(imguiContext);
         try {
             ImGui_ImplSDLRenderer3_Shutdown();
         } catch (std::exception& e) {
             std::cerr << "Exception during ImGui_ImplSDLRenderer3_Shutdown: " << e.what() << std::endl;
         }
-        std::cout << "a0.5" << std::endl;
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext(imguiContext);
         imguiContext = nullptr;
     }
 
-
-    std::cout << "a1" << std::endl;
-    gameServer.reset();
-    gameClient.reset();
-    board.reset();
-
     if (renderer) {
         SDL_DestroyRenderer(renderer);
         renderer = nullptr;
     }
-    std::cout << "a2" << std::endl;
     if (window) {
         SDL_DestroyWindow(window);
         window = nullptr;
@@ -701,6 +783,3 @@ void Game::cleanup() {
 
     printf("[MAIN] Cleanup complete. Exiting.\n");
 }
-
-
-

@@ -2,6 +2,7 @@
 
 #include "Board.h"
 #include "NetworkManager.h"
+#include "MainMenu.h"
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <memory>
@@ -15,6 +16,12 @@ enum class CommandType {
     RESET_GAME,
     NETWORK_MOVE,
     NETWORK_RESET
+};
+
+enum class GameState {
+    MAIN_MENU,
+    IN_GAME,
+    DISCONNECTED
 };
 
 struct Command {
@@ -33,7 +40,7 @@ struct GameStateSnapshot {
 
 class Game {
 public:
-    Game(bool isServer, const std::string& serverAddr = "127.0.0.1", uint16_t port = 27015);
+    Game();
     ~Game();
 
     static SDL_AppResult AppInit(void** appstate, int argc, char** argv);
@@ -59,6 +66,10 @@ private:
 
     // ImGui (persistent)
     ImGuiContext* imguiContext;
+
+    // Game state
+    GameState gameState;
+    std::unique_ptr<MainMenu> mainMenu;
 
     // Networking
     bool isServer;
@@ -92,9 +103,14 @@ private:
 
     // Methods
     bool initialize();
+    bool startGame(bool asServer, const std::string& serverAddr, uint16_t port);
+    void stopGame();
+
     void handleEvent(SDL_Event* event);
     void update();
     void render();
+    void renderMenu();
+    void renderGame();
     void renderImGui();
     void cleanup();
 
