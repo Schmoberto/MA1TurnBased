@@ -2,10 +2,7 @@
 
 #include <array>
 
-#include "Tile.h"
 #include <SDL3/SDL.h>
-#include <vector>
-#include <memory>
 
 enum class TileState {
     EMPTY = 0,

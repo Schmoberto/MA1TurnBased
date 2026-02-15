@@ -1,5 +1,7 @@
 #include "Board.h"
 
+#include <cstdio>
+
 Board::Board()
     : gridThickness(10)
     , backgroundPadding(10)

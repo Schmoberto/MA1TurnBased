@@ -1,10 +1,22 @@
+/*******************************************************************************
+* Game.cpp
+ *
+ * Main game controller implementing the 3-thread architecture:
+ * - Render Thread: SDL main loop, user input, ImGui rendering
+ * - Logic Thread: Game rules, move validation, win detection
+ * - Network Thread: Send/receive packets, connection management
+ *
+ * Thread Communication:
+ * - Lock-free concurrent queues for cross-thread messaging
+ * - Direct state updates for instant UI responsiveness
+ ******************************************************************************/
+
 #include "Game.h"
 
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 #include <iostream>
 #include <ctime>
-#include <iomanip>
 
 Game::Game()
     : window(nullptr), renderer(nullptr), board(nullptr)
@@ -19,6 +31,11 @@ Game::Game()
 Game::~Game() {
     cleanup();
 }
+
+
+/*******************************************************************************
+ *                          SDL CALLBACK FUNCTIONS
+ ******************************************************************************/
 
 // Static callback: Initialize the app
 SDL_AppResult Game::AppInit(void** appstate, int argc, char* argv[]) {
@@ -896,18 +913,6 @@ void Game::logicThreadFunc() {
                        snapshot.isMyTurn ? "YES" : "NO");
             }
         }
-
-        /*
-        // Send state updates to render thread periodically
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdateTime).count() > 50) {
-
-            if (isServer) {
-                createSnapshot(board->getGrid(), localCurrentPlayer, localResult, myMark);
-                printf("e");
-            }
-            lastUpdateTime = now;
-        }*/
 
         // Sleep briefly to prevent busy-waiting
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
