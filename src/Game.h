@@ -15,7 +15,9 @@ enum class CommandType {
     PLACE_MARK,
     RESET_GAME,
     NETWORK_MOVE,
-    NETWORK_RESET
+    NETWORK_RESET,
+    SYNC_STATE_REQUEST,
+    SYNC_STATE_RECEIVED
 };
 
 enum class GameState {
@@ -35,6 +37,7 @@ struct UIMessage {
     std::string text;
     MessageType type;
     std::chrono::steady_clock::time_point timestamp;
+    std::chrono::system_clock::time_point systemTime;
 };
 
 struct ConnectionState {
@@ -147,6 +150,9 @@ private:
     void renderMessages();
     void cleanup();
 
+    // Snapshot helper
+    GameStateSnapshot createSnapshot(std::array<std::array<TileState, 3>, 3> boardState, TileState currentPlayer, GameResult result, TileState mark);
+
     void handleKeyPress(SDL_Keycode key);
     void handleMouseClick(int mouseX, int mouseY);
 
@@ -155,7 +161,6 @@ private:
     void updateMessages();
 
     // Reconnection
-    void attemptReconnect();
     void handleDisconnection();
 };
 

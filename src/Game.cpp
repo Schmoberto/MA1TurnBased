@@ -3,6 +3,8 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 #include <iostream>
+#include <ctime>
+#include <iomanip>
 
 Game::Game()
     : window(nullptr), renderer(nullptr), board(nullptr)
@@ -170,7 +172,7 @@ bool Game::startGame(bool asServer, const std::string &serverAddr, uint16_t port
     // Initialize render state
     currentRenderState.currentPlayer = TileState::X;
     currentRenderState.result = GameResult::IN_PROGRESS;
-    currentRenderState.isMyTurn = isServer;
+    currentRenderState.isMyTurn = isServer;  // This is correct for initial state
 
     // Start network
     if (isServer) {
@@ -246,9 +248,22 @@ void Game::addMessage(const std::string& text, MessageType type) {
     msg.text = text;
     msg.type = type;
     msg.timestamp = std::chrono::steady_clock::now();
+    msg.systemTime = std::chrono::system_clock::now();
 
     messageQueue.enqueue(msg);
-    std::cout << "[MESSAGE] " << text << std::endl;
+
+    // Log with timestamp
+    auto now_c = std::chrono::system_clock::to_time_t(msg.systemTime);
+    std::tm now_tm;
+#ifdef _WIN32
+    localtime_s(&now_tm, &now_c);
+#else
+    localtime_r(&now_c, &now_tm);
+#endif
+
+    char timeStr[32];
+    std::strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &now_tm);
+    printf("[MESSAGE %s] %s\n", timeStr, text.c_str());
 }
 
 void Game::updateMessages() {
@@ -293,7 +308,7 @@ void Game::renderMessages() {
                 break;
             case MessageType::SUCCESS:
                 color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-                prefix = "[✓] ";
+                prefix = "[+] ";
                 break;
             case MessageType::WARNING:
                 color = ImVec4(0.9f, 0.7f, 0.2f, 1.0f);
@@ -301,12 +316,24 @@ void Game::renderMessages() {
                 break;
             case MessageType::ERROR:
                 color = ImVec4(0.9f, 0.2f, 0.2f, 1.0f);
-                prefix = "[✗] ";
+                prefix = "[-] ";
                 break;
         }
 
+        // Format timestamp
+        auto time_c = std::chrono::system_clock::to_time_t(msg.systemTime);
+        std::tm time_tm;
+#ifdef _WIN32
+        localtime_s(&time_tm, &time_c);
+#else
+        localtime_r(&time_c, &time_tm);
+#endif
+
+        char timeStr[32];
+        std::strftime(timeStr, sizeof(timeStr), "%H:%M:%S", &time_tm);
+
         ImGui::PushStyleColor(ImGuiCol_Text, color);
-        ImGui::TextWrapped("%s%s", prefix, msg.text.c_str());
+        ImGui::TextWrapped("[%s] %s%s", timeStr, prefix, msg.text.c_str());
         ImGui::PopStyleColor();
     }
 }
@@ -314,49 +341,6 @@ void Game::renderMessages() {
 // ============================================================================
 // RECONNECTION LOGIC
 // ============================================================================
-
-void Game::attemptReconnect() {
-    if (isServer || connectionState.reconnectAttempts >= connectionState.maxReconnectAttempts) {
-        return;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now - connectionState.lastReconnectAttempt);
-
-    if (elapsed < connectionState.reconnectDelay) {
-        return; // Wait before next attempt
-    }
-
-    connectionState.reconnectAttempts++;
-    connectionState.lastReconnectAttempt = now;
-    connectionState.isReconnecting = true;
-
-    std::cout << "[RECONNECT] Attempt " << connectionState.reconnectAttempts
-              << "/" << connectionState.maxReconnectAttempts << std::endl;
-
-    addMessage("Reconnecting... (attempt " +
-               std::to_string(connectionState.reconnectAttempts) + "/3)",
-               MessageType::WARNING);
-
-    // Try to reconnect
-    gameClient = std::make_unique<GameClient>();
-    if (gameClient->connectToServer(serverAddress, port)) {
-        std::cout << "[RECONNECT] Reconnection initiated" << std::endl;
-    } else {
-        std::cout << "[RECONNECT] Reconnection failed" << std::endl;
-
-        if (connectionState.reconnectAttempts >= connectionState.maxReconnectAttempts) {
-            addMessage("Failed to reconnect. Returning to menu...", MessageType::ERROR);
-
-            // Schedule return to menu
-            std::thread([this]() {
-                std::this_thread::sleep_for(std::chrono::seconds(2));
-                stopGame();
-            }).detach();
-        }
-    }
-}
 
 void Game::handleDisconnection() {
     if (isServer) {
@@ -368,8 +352,18 @@ void Game::handleDisconnection() {
         if (!connectionState.isReconnecting) {
             connectionState.isConnected = false;
             connectionState.isReconnecting = true;
-            connectionState.lastReconnectAttempt = std::chrono::steady_clock::now();
-            addMessage("Disconnected from server!", MessageType::ERROR);
+            addMessage("Lost connection to server...", MessageType::ERROR);
+
+            // Give server some time, then give up
+            std::thread([this]() {
+                std::this_thread::sleep_for(std::chrono::seconds(10)); // Wait 10 seconds
+
+                if (!connectionState.isConnected && running) {
+                    addMessage("Could not reconnect. Returning to menu...", MessageType::ERROR);
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                    stopGame();
+                }
+            }).detach();
         }
     }
 }
@@ -417,24 +411,17 @@ SDL_AppResult Game::AppIterate(void* appstate) {
 
     // Get latest state from logic thread
     if (game->gameState == GameState::IN_GAME) {
-        GameStateSnapshot newState{};
-        if (game->gameStateQueue.try_dequeue(newState)) {
+        GameStateSnapshot newState;
+
+        // Process all available states in the queue, but only keep the latest one for rendering
+        while (game->gameStateQueue.try_dequeue(newState)) {
             game->currentRenderState = newState;
         }
-    }
 
-    // Update messages
-    game->updateMessages();
-
-    // Handle reconnction
-    if (game->gameState == GameState::IN_GAME) {
-        if (!game->isServer && !game->connectionState.isReconnecting) {
-            game->attemptReconnect();
-        }
+        game->updateMessages();
     }
 
     game->render();
-
     return SDL_APP_CONTINUE;
 }
 
@@ -499,14 +486,17 @@ void Game::handleKeyPress(SDL_Keycode key) {
 }
 
 void Game::handleMouseClick(int mouseX, int mouseY) {
-    // Only allow clicks if it's the player's turn
-    if (!currentRenderState.isMyTurn) {
-        printf("[RENDER] Not your turn!\n");
+    // Check if game is over
+    if (currentRenderState.result != GameResult::IN_PROGRESS) {
+        printf("[RENDER] Game over! Press R to reset.\n");
+        addMessage("Game is over! Press Reset to play again.", MessageType::INFO);
         return;
     }
 
-    if (currentRenderState.result != GameResult::IN_PROGRESS) {
-        printf("[RENDER] Game over! Press R to reset.\n");
+    // Only allow clicks if it's the player's turn
+    if (!currentRenderState.isMyTurn) {
+        printf("[RENDER] Not your turn!\n");
+        addMessage("Not your turn!", MessageType::WARNING);
         return;
     }
 
@@ -517,8 +507,17 @@ void Game::handleMouseClick(int mouseX, int mouseY) {
         return;
     }
 
+    if (!board) {
+        std::cerr << "[RENDER] Board is null!" << std::endl;
+        return;
+    }
+
+    TileState tileState = board->getTile(pos.x, pos.y);
+    printf("[RENDER] Tile state: %d\n", static_cast<int>(tileState));
+
     // Check if tile is already occupied
-    if (board->getTile(pos.x, pos.y) != TileState::EMPTY) {
+    if (tileState != TileState::EMPTY) {
+        printf("[RENDER] Cell at (%d, %d) is already occupied by %c\n", pos.x, pos.y, tileState == TileState::X ? 'X' : 'O');
         addMessage("Cell already occupied!", MessageType::WARNING);
         return;
     }
@@ -731,7 +730,7 @@ void Game::logicThreadFunc() {
                     packet.data["mark"] = static_cast<int>(cmd.mark);
 
                     if (isServer && gameServer) {
-                        printf("[OLGIC] Server broadcasting move to client\n");
+                        printf("[LOGIC] Server broadcasting move to client\n");
                         gameServer->broadcastPacket(packet);
                     } else if (!isServer && gameClient) {
                         printf("[LOGIC] Client sending move to server\n");
@@ -741,10 +740,19 @@ void Game::logicThreadFunc() {
                     // Check winner
                     localResult = board->checkWinner();
 
+                    // Show win messages for BOTH local and network moves
                     if (localResult == GameResult::X_WINS) {
-                        addMessage("X wins the game!", MessageType::SUCCESS);
+                        if (myMark == TileState::X) {
+                            addMessage("🎉 You win!", MessageType::SUCCESS);
+                        } else {
+                            addMessage("X wins - You lose!", MessageType::ERROR);
+                        }
                     } else if (localResult == GameResult::O_WINS) {
-                        addMessage("O wins the game!", MessageType::SUCCESS);
+                        if (myMark == TileState::O) {
+                            addMessage("🎉 You win!", MessageType::SUCCESS);
+                        } else {
+                            addMessage("O wins - You lose!", MessageType::ERROR);
+                        }
                     } else if (localResult == GameResult::DRAW) {
                         addMessage("It's a draw!", MessageType::INFO);
                     }
@@ -753,12 +761,14 @@ void Game::logicThreadFunc() {
                     if (localResult == GameResult::IN_PROGRESS) {
                         localCurrentPlayer = (localCurrentPlayer == TileState::X) ? TileState::O : TileState::X;
                         printf("[LOGIC] Turn switched to %c\n", localCurrentPlayer == TileState::X ? 'X' : 'O');
-                    } else {
-                        printf("[LOGIC] Invalid move\n");
                     }
+
+                    createSnapshot(board->getGrid(), localCurrentPlayer, localResult, myMark);
+                } else {
+                    printf("[LOGIC] Invalid move\n");
                 }
 
-
+                // Note: We don't switch turns here - we wait for the network move to confirm the turn switch
             } else if (cmd.type == CommandType::NETWORK_MOVE) {
                 if (board->setTile(cmd.x, cmd.y, cmd.mark)) {
                     std::cout << "[LOGIC] Applied network move: "
@@ -767,11 +777,38 @@ void Game::logicThreadFunc() {
 
                     addMessage("Opponent moved!", MessageType::INFO);
 
+                    // Check winner AFTER network move too
                     localResult = board->checkWinner();
+
+                    if (localResult == GameResult::X_WINS) {
+                        if (myMark == TileState::X) {
+                            addMessage("🎉 You win!", MessageType::SUCCESS);
+                        } else {
+                            addMessage("X wins - You lose!", MessageType::ERROR);
+                        }
+                    } else if (localResult == GameResult::O_WINS) {
+                        if (myMark == TileState::O) {
+                            addMessage("🎉 You win!", MessageType::SUCCESS);
+                        } else {
+                            addMessage("O wins - You lose!", MessageType::ERROR);
+                        }
+                    } else if (localResult == GameResult::DRAW) {
+                        addMessage("It's a draw!", MessageType::INFO);
+                    }
+
+                    // Switch turn after processing network move
                     if (localResult == GameResult::IN_PROGRESS) {
                         localCurrentPlayer = (localCurrentPlayer == TileState::X) ? TileState::O : TileState::X;
-                        printf("[LOGIC] Turn switched to %c\n", localCurrentPlayer == TileState::X ? 'X' : 'O');
                     }
+
+
+                    GameStateSnapshot snapshot = createSnapshot(board->getGrid(), localCurrentPlayer, localResult, myMark);
+                    printf("a");
+
+                    printf("[LOGIC] Client sent state after network move: player=%c, myTurn=%s\n",
+                       localCurrentPlayer == TileState::X ? 'X' : 'O',
+                       snapshot.isMyTurn ? "YES" : "NO");
+
                 } else {
                     printf("[LOGIC] Failed to apply network move: Invalid position or tile already occupied");
                 }
@@ -785,6 +822,10 @@ void Game::logicThreadFunc() {
 
                 addMessage("Game reset!", MessageType::INFO);
 
+                // Immediately update render state
+                createSnapshot(board->getGrid(), TileState::X, GameResult::IN_PROGRESS, TileState::X);
+                printf("b");
+
                 if (!cmd.fromNetwork) {
                     NetworkPacket packet;
                     packet.type = PacketType::GAME_RESET;
@@ -795,6 +836,7 @@ void Game::logicThreadFunc() {
                     }
                 }
                 printf("[LOGIC] Game reset\n");
+
             } else if (cmd.type == CommandType::NETWORK_RESET) {
                 printf("[LOGIC] Received network reset\n");
                 board->resetBoard();
@@ -802,21 +844,70 @@ void Game::logicThreadFunc() {
                 localResult = GameResult::IN_PROGRESS;
 
                 addMessage("Game reset by opponent!", MessageType::INFO);
+
+                // Immediately update render state
+                createSnapshot(board->getGrid(), TileState::X, GameResult::IN_PROGRESS, TileState::X);
+                printf("c");
+
+            } else if (cmd.type == CommandType::SYNC_STATE_REQUEST) {
+                printf("[LOGIC] Syncing full state to clients...\n");
+
+                if (isServer && gameServer && board) {
+                    NetworkPacket syncPacket;
+                    syncPacket.type = PacketType::GAME_STATE;
+
+                    // Serialize board state
+                    auto cells = board->getGrid();
+                    std::vector<int> boardData;
+                    for (int y = 0; y < 3; y++) {
+                        for (int x = 0; x < 3; x++) {
+                            boardData.push_back(static_cast<int>(cells[y][x]));
+                        }
+                    }
+
+                    syncPacket.data["board"] = boardData;
+                    syncPacket.data["currentPlayer"] = static_cast<int>(localCurrentPlayer);  // ⭐ CRITICAL
+                    syncPacket.data["result"] = static_cast<int>(localResult);
+
+                    gameServer->broadcastPacket(syncPacket);
+
+                    printf("[LOGIC] Sent state sync: currentPlayer=%s, result=%d\n",
+                           (localCurrentPlayer == TileState::X ? "X" : "O"),
+                           static_cast<int>(localResult));
+                }
+            } else if (cmd.type == CommandType::SYNC_STATE_RECEIVED) {
+                // Client received sync from server - update local state
+                printf("[LOGIC] Received sync from network thread\n");
+
+                localCurrentPlayer = cmd.mark;  // Passed in mark field
+                localResult = board->checkWinner();
+
+                // Determine if it's our turn based on the current player
+                bool isMyTurn = (localCurrentPlayer == myMark);
+
+                printf("[LOGIC] Updated local state: currentPlayer=%c\n",
+                       localCurrentPlayer == TileState::X ? 'X' : 'O');
+
+                // Send immediate state update
+                GameStateSnapshot snapshot = createSnapshot(board->getGrid(), localCurrentPlayer, board->checkWinner(), myMark);
+                printf("d");
+
+                printf("[LOGIC] Sent updated state: isMyTurn=%s\n",
+                       snapshot.isMyTurn ? "YES" : "NO");
             }
         }
 
+        /*
         // Send state updates to render thread periodically
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdateTime).count() > 50) {
-            GameStateSnapshot snapshot;
-            snapshot.boardState = board->getGrid();
-            snapshot.currentPlayer = localCurrentPlayer;
-            snapshot.result = localResult;
-            snapshot.isMyTurn = (localCurrentPlayer == myMark);
 
-            gameStateQueue.enqueue(snapshot);
+            if (isServer) {
+                createSnapshot(board->getGrid(), localCurrentPlayer, localResult, myMark);
+                printf("e");
+            }
             lastUpdateTime = now;
-        }
+        }*/
 
         // Sleep briefly to prevent busy-waiting
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -834,6 +925,8 @@ void Game::networkThreadFunc() {
     std::cout << "[NETWORK] Mode: " << (isServer ? "SERVER" : "CLIENT") << std::endl;
 
     int previousClientCount = 0;
+    bool wasConnected = false;
+    bool hasShownDisconnect = false;
 
     while (running) {
         // Update network
@@ -846,15 +939,32 @@ void Game::networkThreadFunc() {
                 if (currentClientCount > previousClientCount) {
                     addMessage("Player connected!", MessageType::SUCCESS);
                     clientDisconnected = false;
-                }
-                else {
-                    addMessage("Player disconnected!", MessageType::WARNING);
-                    handleDisconnection();
-                }
-                printf("[NETWORK] Client count changed: %d -> %d\n", previousClientCount, currentClientCount);
-            }
-            previousClientCount = currentClientCount;
+                    hasShownDisconnect = false;
 
+                    std::thread([this]() {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+                        // Request state sync from logic thread
+                        Command syncCmd;
+                        syncCmd.type = CommandType::SYNC_STATE_REQUEST;
+                        commandInputQueue.enqueue(syncCmd);
+                        printf("[NETWORK] New client connected, requested state sync from logic thread\n");
+                        }).detach();
+                    } else if (previousClientCount > 0 && currentClientCount == 0) {
+                        // Only mark as disconnected if we had a client before (to avoid false positives on server start)
+
+                        if (!hasShownDisconnect) {
+                            addMessage("Player disconnected!", MessageType::WARNING);
+                            addMessage("Client disconnected. Waiting for reconnection...", MessageType::WARNING);
+                            clientDisconnected = true;
+                            hasShownDisconnect = true;
+                        }
+                    }
+                printf("[NETWORK] Client count changed: %d -> %d\n", previousClientCount, currentClientCount);
+                previousClientCount = currentClientCount;
+            }
+
+            // Process incoming packets
             NetworkPacket packet;
             while (gameServer->incomingPackets.try_dequeue(packet)) {
                 printf("[NETWORK] Server received packet type %d\n", static_cast<int>(packet.type));
@@ -881,24 +991,93 @@ void Game::networkThreadFunc() {
         } else if (!isServer && gameClient) {
             gameClient->updateClient();
 
-            // Track connection state
+            // Track connection state with debouncing
             bool currentlyConnected = gameClient->isConnected();
-            if (!currentlyConnected && connectionState.isConnected) {
-                // Just disconnected
-                handleDisconnection();
-            } else if (currentlyConnected && connectionState.isReconnecting) {
-                // Reconnected!
+
+            if (currentlyConnected && !wasConnected) {
+                addMessage("Connected to server!", MessageType::SUCCESS);
                 connectionState.isConnected = true;
                 connectionState.isReconnecting = false;
-                connectionState.reconnectAttempts = 0;
-                addMessage("Reconnected successfully!", MessageType::SUCCESS);
+                hasShownDisconnect = false;
+
+            } else if (!currentlyConnected && wasConnected) {
+                if (!hasShownDisconnect) {
+                    addMessage("Lost connection!", MessageType::ERROR);
+                    addMessage("Returning to menu...", MessageType::WARNING);
+                    hasShownDisconnect = true;
+
+                    std::thread([this]() {
+                        std::this_thread::sleep_for(std::chrono::seconds(5));
+                        if (running) {
+                            stopGame();
+                        }
+                    }).detach();
+                }
             }
 
+            wasConnected = currentlyConnected;
+
+            // Process incoming packets
             NetworkPacket packet;
             while (gameClient->incomingPackets.try_dequeue(packet)) {
                 printf("[NETWORK] Client received packet type %d\n", static_cast<int>(packet.type));
 
-                if (packet.type == PacketType::PLAYER_MOVE) {
+                // Handle board state sync
+                if (packet.type == PacketType::GAME_STATE) {
+                    printf("[NETWORK] Received board state sync.\n");
+
+                    if (packet.data.contains("board") && board) {
+                        auto boardData = packet.data["board"].get<std::vector<int>>();
+
+                        // Apply board state
+                        board->resetBoard();
+                        int idx = 0;
+                        for (int y = 0; y < 3; y++) {
+                            for (int x = 0; x < 3; x++) {
+                                if (idx < boardData.size()) {
+                                    TileState state = static_cast<TileState>(boardData[idx]);
+                                    if (state != TileState::EMPTY) {
+                                        board->setTile(x, y, state);
+                                    }
+                                }
+                                idx++;
+                            }
+                        }
+
+                        // Create snapshot for RENDER thread
+                        if (packet.data.contains("currentPlayer")) {
+
+                            GameStateSnapshot snapshot = createSnapshot(board->getGrid(),
+                                           static_cast<TileState>(packet.data["currentPlayer"].get<int>()),
+                                           packet.data.contains("result") ?
+                                               static_cast<GameResult>(packet.data["result"].get<int>()) :
+                                               GameResult::IN_PROGRESS,
+                                           static_cast<TileState>(packet.data["currentPlayer"].get<int>()));
+                            printf("f");
+
+                            printf("[NETWORK] Synced state:\n");
+                            printf("[NETWORK]   currentPlayer: %c\n",
+                                   snapshot.currentPlayer == TileState::X ? 'X' : 'O');
+                            printf("[NETWORK]   myMark: %c\n",
+                                   myMark == TileState::X ? 'X' : 'O');
+                            printf("[NETWORK]   isMyTurn: %s\n",
+                                   snapshot.isMyTurn ? "YES" : "NO");
+
+                            printf("[NETWORK] Updated currentRenderState directly!\n");
+
+
+                            // ALSO send to logic thread so it knows the current turn
+                            Command syncToLogic;
+                            syncToLogic.type = CommandType::SYNC_STATE_RECEIVED;
+                            syncToLogic.mark = snapshot.currentPlayer;  // Use mark field to pass player
+                            commandInputQueue.enqueue(syncToLogic);
+                            printf("[NETWORK] Sent sync to logic thread\n");
+
+                            addMessage("Board and turn synchronized!", MessageType::SUCCESS);
+                        }
+                    }
+
+                } else if (packet.type == PacketType::PLAYER_MOVE) {
                     int x = static_cast<int>(packet.data["x"]);
                     int y = static_cast<int>(packet.data["y"]);
                     auto mark = static_cast<TileState>(packet.data["mark"].get<int>());
@@ -911,6 +1090,7 @@ void Game::networkThreadFunc() {
                     cmd.y = y;
                     cmd.mark = mark;
                     commandInputQueue.enqueue(cmd);
+
                 } else if (packet.type == PacketType::GAME_RESET) {
                     printf("[NETWORK] Client received reset (not echoing)\n");
                     Command cmd;
@@ -1027,4 +1207,18 @@ void Game::cleanup() {
     }
 
     printf("[MAIN] Cleanup complete. Exiting.\n");
+}
+
+GameStateSnapshot Game::createSnapshot(std::array<std::array<TileState, 3>, 3> boardState, TileState currentPlayer, GameResult result, TileState mark) {
+    GameStateSnapshot snapshot;
+    snapshot.boardState = boardState;
+    snapshot.currentPlayer = currentPlayer;
+    snapshot.result = result;
+    snapshot.isMyTurn = (currentPlayer == myMark);
+
+    currentRenderState = snapshot; // Update render state immediately
+
+    gameStateQueue.enqueue(snapshot);
+
+    return snapshot;
 }

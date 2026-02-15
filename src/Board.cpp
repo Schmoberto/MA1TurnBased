@@ -213,23 +213,55 @@ void Board::drawMark(SDL_Renderer *renderer, int gridX, int gridY, TileState mar
 void Board::drawX(SDL_Renderer *renderer, int x, int y, int size) {
         SDL_SetRenderDrawColor(renderer, 84, 84, 84, 255);
         int halfSize = size / 2;
-        SDL_RenderLine(renderer,
-            x - halfSize, y - halfSize,
-            x + halfSize, y + halfSize);
-        SDL_RenderLine(renderer,
-            x - halfSize, y + halfSize,
-            x + halfSize, y - halfSize);
+        int thickness = 12;
+
+        // Draw X as thick lines
+        for (int i = -thickness/2; i <= thickness/2; i++) {
+            // Top-left to bottom-right diagonal
+            SDL_RenderLine(renderer,
+                x - halfSize + i, y - halfSize,
+                x + halfSize + i, y + halfSize);
+
+            // Top-right to bottom-left diagonal
+            SDL_RenderLine(renderer,
+                x + halfSize + i, y - halfSize,
+                x - halfSize + i, y + halfSize);
+        }
 }
 
 void Board::drawO(SDL_Renderer *renderer, int x, int y, int size) {
     SDL_SetRenderDrawColor(renderer, 84, 84, 84, 255);
     int radius = size / 2;
-    for (int w = 0; w < radius * 2; w++) {
-        for (int h = 0; h < radius * 2; h++) {
-            int dx = radius - w; // horizontal offset
-            int dy = radius - h; // vertical offset
-            if ((dx*dx + dy*dy) >= (radius - 5) * (radius - 5) && (dx*dx + dy*dy) <= (radius + 5) * (radius + 5)) {
-                SDL_RenderPoint(renderer, x + dx, y + dy);
+    int thickness = 12;
+
+    // Draw multiple circles for thickness
+    for (int t = -thickness/2; t <= thickness/2; t++) {
+        int r = radius + t;
+
+        // Only draw if radius is positive
+        if (r <= 0) continue;
+
+        int cx = 0;
+        int cy = r;
+        int d = 3 - 2 * r;
+
+        while (cy >= cx) {
+            // Draw 8 octants
+            SDL_RenderPoint(renderer, x + cx, y + cy);
+            SDL_RenderPoint(renderer, x - cx, y + cy);
+            SDL_RenderPoint(renderer, x + cx, y - cy);
+            SDL_RenderPoint(renderer, x - cx, y - cy);
+            SDL_RenderPoint(renderer, x + cy, y + cx);
+            SDL_RenderPoint(renderer, x - cy, y + cx);
+            SDL_RenderPoint(renderer, x + cy, y - cx);
+            SDL_RenderPoint(renderer, x - cy, y - cx);
+
+            cx++;
+            if (d > 0) {
+                cy--;
+                d = d + 4 * (cx - cy) + 10;
+            } else {
+                d = d + 4 * cx + 6;
             }
         }
     }

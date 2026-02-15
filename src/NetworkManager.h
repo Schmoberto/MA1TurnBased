@@ -14,6 +14,7 @@ using json = nlohmann::json;
 enum class PacketType {
     PLAYER_MOVE,        // Client sends a move to the server
     GAME_STATE_UPDATE,  // Server sends updated game state to clients
+    GAME_STATE,         // Server sends the full game state (e.g. on new client join)
     GAME_RESET,         // Signal to reset the game state
     PLAYER_JOINED,      // New player joined the lobby
     CHAT_MESSAGE
