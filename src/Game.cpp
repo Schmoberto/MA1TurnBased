@@ -715,8 +715,8 @@ void Game::renderGame() {
  */
 void Game::renderImGui() {
     // Game Status Window
-    ImGui::SetNextWindowPos(ImVec2(500, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(50, 100), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(625, 20), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 615), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Game Status", nullptr, ImGuiWindowFlags_NoCollapse);
 

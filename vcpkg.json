@@ -1,6 +1,6 @@
 {
-  "name": "ma1-turnbased-blokus",
-  "version-string": "0.0.1",
+  "name": "ma1-turnbased-game",
+  "version-string": "1.0.0",
   "dependencies": [
     "gamenetworkingsockets",
     {

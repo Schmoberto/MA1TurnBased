@@ -122,7 +122,7 @@ private:
 
     // UI messages
     std::vector<UIMessage> activeMessages;
-    static const int MAX_MESSAGES = 3;
+    static const int MAX_MESSAGES = 25;
     static const int MESSAGE_DURATION_MS = 5000; // 5 seconds
 
     // Game state
@@ -142,16 +142,12 @@ private:
     void stopGame();
 
     void handleEvent(SDL_Event* event);
-    void update();
     void render();
     void renderMenu();
     void renderGame();
     void renderImGui();
     void renderMessages();
     void cleanup();
-
-    // Snapshot helper
-    GameStateSnapshot createSnapshot(std::array<std::array<TileState, 3>, 3> boardState, TileState currentPlayer, GameResult result, TileState mark);
 
     void handleKeyPress(SDL_Keycode key);
     void handleMouseClick(int mouseX, int mouseY);
