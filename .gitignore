@@ -58,5 +58,3 @@ CMakeUserPresets.json
 /.cmake/
 
 *.log
-*.vcxproj
-*.vcxproj.filters
