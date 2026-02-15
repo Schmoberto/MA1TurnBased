@@ -1,4 +1,16 @@
-﻿#include "MainMenu.h"
+﻿/*******************************************************************************
+ * MainMenu.cpp
+ *
+ * Implements the main menu UI for the Tic-Tac-Toe game using ImGui. Allows users to
+ * host a server or join an existing one by entering the server IP and port.
+ *
+ * Architecture:
+ * - MainMenu class encapsulates all menu logic and rendering
+ * - Uses ImGui for UI rendering and input handling
+ * - Stores user input in buffers and validates before starting game
+ ******************************************************************************/
+
+#include "MainMenu.h"
 
 MainMenu::MainMenu()
         : choice(MenuChoice::NONE)
@@ -10,17 +22,28 @@ MainMenu::MainMenu()
     strcpy_s(serverPortBuffer, "27015");
 }
 
+/*-----------------------------------------------------------------------------
+ *                          Menu Rendering
+ *---------------------------------------------------------------------------*/
+
+
+/**
+ *  Renders the main menu using ImGui. Provides options to host a server or join an existing one.
+ *  Validates user input for server IP and port before allowing connection.
+ */
 void MainMenu::render() {
     // Center the menu window
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_Always);
 
+    // Main menu window
     ImGui::Begin("Tic Tac Toe Main Menu", nullptr,
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoMove);
 
+    // Title
     ImGui::TextWrapped("Welcome to Multithreaded Networked Tic Tac Toe!");
     ImGui::Spacing();
     ImGui::Separator();

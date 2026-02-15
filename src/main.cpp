@@ -1,3 +1,15 @@
+/*******************************************************************************
+ * main.cpp
+ *
+ * Entry point for the Multithreaded Networked Tic-Tac-Toe game. Initializes SDL,
+ * creates the main Game instance, and sets up the main loop using SDL's callback system.
+ *
+ * Architecture:
+ * - Uses SDL3's SDL_main callbacks for application lifecycle management
+ * - Delegates initialization, event handling, and rendering to the Game class
+ * - Provides a clean separation between SDL setup and game logic
+ ******************************************************************************/
+
 #include "Game.h"
 
 #define SDL_MAIN_USE_CALLBACKS
